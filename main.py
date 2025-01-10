@@ -66,7 +66,8 @@ class Summary(Plugin):
 尽可能简单简要描述这张图片的客观内容，抓住整体和关键信息，但不做概述，不做评论，限制在100字以内.
 如果是股票类截图，重点抓住主体股票名，关键的时间和当前价格，不关注其他细分价格和指数；
 如果是文字截图，只关注文字内容，不用描述图的颜色颜色等；
-如果图中有划线，画圈等，要注意这可能是表达的重点信息。
+如果图中有划线，画圈等，要注意这可能是表达的重点信息；
+如果图中有人物，要注意性别，总结内容中包含发送者的名称。
             """
     #新增的多模态LLM配置
     multimodal_llm_api_base = ""
@@ -87,6 +88,17 @@ class Summary(Plugin):
             if self.multimodal_llm_api_base and not self.multimodal_llm_api_key:
                 logger.error("[Summary] 多模态LLM API 密钥未在配置中找到")
                 raise Exception("多模态LLM API 密钥未配置")
+
+            # 加载总结模型配置
+            self.bot_type = self.config.get("bot_type", "openAI")
+            self.open_ai_api_base = self.config.get("open_ai_api_base", "https://api.openai.com/v1")
+            self.open_ai_api_key = self.config.get("open_ai_api_key", "")
+            self.open_ai_model = self.config.get("open_ai_model", "gpt-4o-mini")
+
+            # 验证 OpenAI API 密钥
+            if not self.open_ai_api_key:
+                logger.error("[Summary] OpenAI API 密钥未在配置中找到")
+                raise Exception("OpenAI API 密钥未配置")
 
             # 加载提示词，优先读取配置，否则用默认的
             config_summary_prompt = self.config.get("default_summary_prompt")
@@ -196,15 +208,14 @@ class Summary(Plugin):
             'max_tokens': self.summary_max_tokens #修改变量名
         }
 
-    def _chat_completion(self, content, e_context, custom_prompt=None, prompt_type="summary"):
+    def _chat_completion(self, content, custom_prompt=None, prompt_type="summary"):
         """
-        准备总结提示词并传递给下一个插件处理
-        
+        调用 OpenAI 聊天补全 API
+
         :param content: 需要总结的聊天内容
-        :param e_context: 事件上下文
-        :param custom_prompt: 可选的自定义 prompt
+        :param custom_prompt: 可选的自定义 prompt，用于替换默认 prompt
         :param prompt_type: 定义使用哪一个类型的prompt，可选值 summary，image
-        :return: None，由下一个插件处理
+        :return: 总结后的文本
         """
         try:
             # 使用默认 prompt
@@ -218,19 +229,36 @@ class Summary(Plugin):
             # 使用 custom_prompt，如果 custom_prompt 为空，则替换为 "无"
             replacement_prompt = custom_prompt if custom_prompt else "无"
             prompt_to_use = prompt_to_use.replace("{custom_prompt}", replacement_prompt)
-            
-            # 构造完整的提示词
-            full_prompt = f"{prompt_to_use}\n\n'''{content}'''"
-            
-            # 修改 context 内容，传递给下一个插件处理
-            e_context['context'].type = ContextType.TEXT
-            e_context['context'].content = full_prompt
-            
-            # 继续传递给下一个插件处理
-            e_context.action = EventAction.CONTINUE
-            logger.debug(f"[Summary] 传递内容给下一个插件处理: length={len(full_prompt)}")
-            return
-            
+
+            # 增加日志：打印完整提示词
+            logger.info(f"[Summary] 完整提示词: {prompt_to_use}")
+
+            # 准备完整的载荷
+            payload = {
+                "model": self.open_ai_model,
+                "messages": [
+                    {"role": "system", "content": prompt_to_use},
+                    {"role": "user", "content": content}
+                ],
+                "max_tokens": self.summary_max_tokens
+            }
+
+            # 获取 OpenAI API URL 和请求头
+            url = self._get_openai_chat_url()
+            headers = self._get_openai_headers()
+
+            # 发送 API 请求
+            response = requests.post(url, headers=headers, json=payload)
+
+            # 检查并处理响应
+            if response.status_code == 200:
+                result = response.json()
+                summary = result['choices'][0]['message']['content'].strip()
+                return summary
+            else:
+                logger.error(f"[Summary] OpenAI API 错误: {response.text}")
+                return f"总结失败：{response.text}"
+
         except Exception as e:
             logger.error(f"[Summary] 总结生成失败: {e}")
             return f"总结失败：{str(e)}"
@@ -514,19 +542,19 @@ class Summary(Plugin):
             text_content = self._multimodal_completion(self.multimodal_llm_api_key, image_path, self.default_image_prompt, model=self.multimodal_llm_model)
 
             if text_content is None:
-                    error_msg = "识图失败：多模态LLM API返回为空"
-                    logger.error(f"[Summary] {error_msg}")
-                    return error_msg #返回错误信息
+                error_msg = "识图失败：多模态LLM API返回为空"
+                logger.error(f"[Summary] {error_msg}")
+                return error_msg #返回错误信息
             elif text_content.startswith("图片转文字失败"):
-                    error_msg = f"识图失败：{text_content}"
-                    logger.error(f"[Summary] {error_msg}")
-                    return error_msg #返回错误信息
+                error_msg = f"识图失败：{text_content}"
+                logger.error(f"[Summary] {error_msg}")
+                return error_msg #返回错误信息
             else:
-                    # 将识别出的文本内容保存到数据库，并记录日志
-                    content = f"[图片描述]{text_content}"
-                    self._insert_record(session_id, msg_id, username, content, str(ContextType.TEXT), create_time, 0)
-                    logger.info(f"[Summary] 图片识别成功并保存到数据库 - 会话ID: {session_id}, 用户: {username}, 内容: {content}")
-                    return True # 返回 True 表示成功
+                # 将识别出的文本内容保存到数据库，并记录日志
+                content = f"[图片描述]{text_content}"
+                self._insert_record(session_id, msg_id, username, content, str(ContextType.TEXT), create_time, 0)
+                logger.info(f"[Summary] 图片识别成功并保存到数据库 - 会话ID: {session_id}, 用户: {username}, 内容: {content}")
+                return True # 返回 True 表示成功
         except Exception as e:
             error_msg = f"识图失败：未知错误 {str(e)}"
             logger.error(f"[Summary] {error_msg}")
@@ -541,13 +569,10 @@ class Summary(Plugin):
                 return # 处理返回None的情况
             elif isinstance(result, str) and (result.startswith("识图失败") or result.startswith("图片处理失败")):  # 确保返回的是字符串
                 logger.error(f"[Summary] 异步图片处理失败：{result}")
-                print(f"[Summary] 异步图片处理失败：{result}")  # 添加打印到控制台的逻辑
             elif result is True:
                 logger.info("[Summary] 异步图片处理成功")
-                print("[Summary] 异步图片处理成功")
         except Exception as e:
             logger.error(f"[Summary] 异步处理结果错误：{e}")
-            print(f"[Summary] 异步处理结果错误：{e}")  # 添加打印到控制台的逻辑
 
     def _check_tokens(self, records, max_tokens=None):  # 添加默认值
         """准备用于总结的聊天内容"""
@@ -785,8 +810,12 @@ class Summary(Plugin):
         processing_reply = Reply(ReplyType.TEXT, "🎉正在为您生成总结，请稍候...")
         e_context["channel"].send(processing_reply, e_context["context"])
         
-        # 调用总结功能并传递给下一个插件
-        return self._chat_completion(query, e_context, custom_prompt, "summary")
+        # 调用总结功能
+        summarys = self._split_messages_to_summarys(records, custom_prompt, max_summarys=10)
+        result = "\n\n".join(summarys)
+        reply = Reply(ReplyType.TEXT, result)
+        e_context["reply"] = reply
+        e_context.action = EventAction.BREAK_PASS
 
     def get_help_text(self, verbose = False, **kwargs):
         help_text = "聊天记录总结插件。\n"
