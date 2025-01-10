@@ -90,7 +90,6 @@ class Summary(Plugin):
                 raise Exception("多模态LLM API 密钥未配置")
 
             # 加载总结模型配置
-            self.bot_type = self.config.get("bot_type", "openAI")
             self.open_ai_api_base = self.config.get("open_ai_api_base", "https://api.openai.com/v1")
             self.open_ai_api_key = self.config.get("open_ai_api_key", "")
             self.open_ai_model = self.config.get("open_ai_model", "gpt-4o-mini")
