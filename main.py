@@ -157,11 +157,24 @@ class Summary(Plugin):
     def _load_config(self):
         """从 config.json 加载配置"""
         try:
+            # 首先加载插件自己的配置
             config_path = os.path.join(os.path.dirname(__file__), "config.json")
-            if not os.path.exists(config_path):
-                return {}
-            with open(config_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+            config = {}
+            if os.path.exists(config_path):
+                with open(config_path, "r", encoding="utf-8") as f:
+                    config = json.load(f)
+            
+            # 加载主配置文件
+            main_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json")
+            if os.path.exists(main_config_path):
+                with open(main_config_path, "r", encoding="utf-8") as f:
+                    main_config = json.load(f)
+                    # 将主配置中的gewechat相关配置映射到插件配置中
+                    config['api_base_url'] = main_config.get('gewechat_base_url')
+                    config['api_token'] = main_config.get('gewechat_token')
+                    config['app_id'] = main_config.get('gewechat_app_id')
+            
+            return config
         except Exception as e:
             logger.error(f"[Summary] 加载配置失败: {e}")
             return {}
