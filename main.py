@@ -733,7 +733,7 @@ class Summary(Plugin):
             # 3. 消息为"总结 xxx"格式
             content_stripped = content.strip()
             if content_stripped.startswith("总结") or \
-               (content_stripped.startswith("@") and "总结" in content_stripped.split(" ", 1)[1].strip().split(" ", 1)[0]) or \
+               (content_stripped.startswith("@") and self._check_summary_after_mention(content_stripped)) or \
                any(part.strip() == "总结" for part in content_stripped.split(" ", 1)):
                 is_trigger = True
                 # 如果消息以"@"开头，移除@部分
@@ -815,6 +815,14 @@ class Summary(Plugin):
         reply = Reply(ReplyType.TEXT, result)
         e_context["reply"] = reply
         e_context.action = EventAction.BREAK_PASS
+    
+    def _check_summary_after_mention(self, content):
+        """
+        检查内容是否以 @ 开头，并且 @ 后面包含 "总结" 关键词。
+        避免直接访问可能不存在的列表索引，处理潜在的 IndexError。
+        """
+        parts = content.split(" ", 1)
+        return len(parts) > 1 and "总结" in parts[1].strip().split(" ", 1)[0]
 
     def get_help_text(self, verbose = False, **kwargs):
         help_text = "聊天记录总结插件。\n"
