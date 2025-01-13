@@ -21,7 +21,6 @@ from channel.chat_message import ChatMessage
 from common.log import logger
 from plugins import *
 
-
 @plugins.register(
     name="Summary",
     desire_priority=10,
@@ -43,7 +42,7 @@ class Summary(Plugin):
     *   **最高优先级：** 用户特定指令:{custom_prompt} **，如果涉及总结可以参考总结的规则，否则只遵循用户特定指令执行。
     *   **次优先级：** 在指令为无时，执行默认的总结操作。
 
-2.  **默认总结规则（仅在满足次优先级条件时执行）：**
+2. **默认总结规则（仅在满足次优先级条件时执行）：**
     *   做群聊总结和摘要，主次层次分明；
     *   尽量突出重要内容以及关键信息（重要的关键字/数据/观点/结论等），请表达呈现出来，避免过于简略而丢失信息量；
     *   允许有多个主题/话题，分开描述；
@@ -78,12 +77,12 @@ class Summary(Plugin):
         super().__init__()
         try:
             self.config = self._load_config()
-            
+
             #加载多模态LLM配置
             self.multimodal_llm_api_base = self.config.get("multimodal_llm_api_base", "")
             self.multimodal_llm_model = self.config.get("multimodal_llm_model", "")
             self.multimodal_llm_api_key = self.config.get("multimodal_llm_api_key", "")
-            
+
             # 验证多模态LLM配置
             if self.multimodal_llm_api_base and not self.multimodal_llm_api_key:
                 logger.error("[Summary] 多模态LLM API 密钥未在配置中找到")
@@ -102,7 +101,7 @@ class Summary(Plugin):
             # 加载提示词，优先读取配置，否则用默认的
             config_summary_prompt = self.config.get("default_summary_prompt")
             self.default_summary_prompt = config_summary_prompt if config_summary_prompt else self.default_summary_prompt
-            
+
             config_image_prompt = self.config.get("default_image_prompt")
             self.default_image_prompt = config_image_prompt if config_image_prompt else self.default_image_prompt
 
@@ -110,7 +109,7 @@ class Summary(Plugin):
             self.summary_max_tokens = self.config.get("summary_max_tokens", 8000)
             self.input_max_tokens_limit = self.config.get("input_max_tokens_limit", 160000)
             self.chunk_max_tokens = self.config.get("chunk_max_tokens", 16000)
-            
+
             # 初始化数据库
             curdir = os.path.dirname(__file__)
             db_path = os.path.join(curdir, "chat.db")
@@ -140,7 +139,7 @@ class Summary(Plugin):
         c.execute('''CREATE TABLE IF NOT EXISTS chat_records
                     (sessionid TEXT, msgid INTEGER, user TEXT, content TEXT, type TEXT, timestamp INTEGER, is_triggered INTEGER,
                     PRIMARY KEY (sessionid, msgid))''')
-        
+
         # 检查 is_triggered 列是否存在
         c = c.execute("PRAGMA table_info(chat_records);")
         column_exists = False
@@ -162,7 +161,7 @@ class Summary(Plugin):
             if os.path.exists(config_path):
                 with open(config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
-            
+
             # 加载主配置文件
             main_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json")
             if os.path.exists(main_config_path):
@@ -172,7 +171,7 @@ class Summary(Plugin):
                     config['api_base_url'] = main_config.get('gewechat_base_url')
                     config['api_token'] = main_config.get('gewechat_token')
                     config['app_id'] = main_config.get('gewechat_app_id')
-            
+
             return config
         except Exception as e:
             logger.error(f"[Summary] 加载配置失败: {e}")
@@ -189,7 +188,7 @@ class Summary(Plugin):
             'Host': urlparse(self.open_ai_api_base).netloc,
             'Content-Type': 'application/json'
         }
-    
+
     def _get_multimodal_llm_headers(self):
         """获取多模态LLM API 请求头"""
         return {
@@ -217,28 +216,27 @@ class Summary(Plugin):
         :return: 总结后的文本
         """
         try:
-            # 使用默认 prompt
-            if prompt_type == "summary":
-                prompt_to_use = self.default_summary_prompt
+            messages = []
+            if custom_prompt:
+                # 当有自定义指令时，使用更直接的指令
+                messages.append({"role": "system", "content": f"请根据用户的明确指示总结以下聊天记录，重点关注：{custom_prompt}"})
+                messages.append({"role": "user", "content": content})
+            elif prompt_type == "summary":
+                prompt_to_use = self.default_summary_prompt.replace("{custom_prompt}", "无") # 即使没有自定义指令也要替换掉占位符
+                messages.append({"role": "system", "content": prompt_to_use})
+                messages.append({"role": "user", "content": content})
             elif prompt_type == "image":
-                prompt_to_use = self.default_image_prompt
+                messages.append({"role": "system", "content": self.default_image_prompt})
+                messages.append({"role": "user", "content": content})
             else:
-                prompt_to_use = self.default_summary_prompt  # 默认选择 summary 类型
-
-            # 使用 custom_prompt，如果 custom_prompt 为空，则替换为 "无"
-            replacement_prompt = custom_prompt if custom_prompt else "无"
-            prompt_to_use = prompt_to_use.replace("{custom_prompt}", replacement_prompt)
-
-            # 增加日志：打印完整提示词
-            logger.info(f"[Summary] 完整提示词: {prompt_to_use}")
+                prompt_to_use = self.default_summary_prompt.replace("{custom_prompt}", "无")
+                messages.append({"role": "system", "content": prompt_to_use})
+                messages.append({"role": "user", "content": content})
 
             # 准备完整的载荷
             payload = {
                 "model": self.open_ai_model,
-                "messages": [
-                    {"role": "system", "content": prompt_to_use},
-                    {"role": "user", "content": content}
-                ],
+                "messages": messages,
                 "max_tokens": self.summary_max_tokens
             }
 
@@ -279,7 +277,6 @@ class Summary(Plugin):
             with open(image_path, "rb") as image_file:
                 encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
             image_url_data = f"data:image/jpeg;base64,{encoded_string}"
-
 
             # 2. 构建 JSON Payload
             payload = {
@@ -346,7 +343,7 @@ class Summary(Plugin):
         """将图片调整大小并编码为 base64"""
         try:
             img = Image.open(image_path)
-            
+
             # 将图片转换为 RGB 模式，去除 alpha 通道
             if img.mode == 'RGBA':
                 img = img.convert('RGB')
@@ -376,7 +373,7 @@ class Summary(Plugin):
         logger.debug("[Summary] 插入记录: {} {} {} {} {} {} {}" .format(session_id, msg_id, user, content, msg_type, timestamp, is_triggered))
         c.execute("INSERT OR REPLACE INTO chat_records VALUES (?,?,?,?,?,?,?)", (session_id, msg_id, user, content, msg_type, timestamp, is_triggered))
         self.conn.commit()
-    
+
     def _get_records(self, session_id, start_timestamp=0, limit=9999):
         """从数据库获取记录"""
         c = self.conn.cursor()
@@ -387,7 +384,7 @@ class Summary(Plugin):
         """获取用户昵称"""
         if user_id in self.user_nickname_cache:
             return self.user_nickname_cache[user_id]
-        
+
         try:
             # 调用API获取用户信息
             response = requests.post(
@@ -400,7 +397,7 @@ class Summary(Plugin):
                     "wxids": [user_id]
                 }
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ret') == 200 and data.get('data'):
@@ -409,7 +406,7 @@ class Summary(Plugin):
                     return nickname
         except Exception as e:
             logger.error(f"[Summary] 获取用户昵称失败: {e}")
-        
+
         return user_id
 
     def _get_group_name(self, group_id):
@@ -418,7 +415,7 @@ class Summary(Plugin):
         if group_id in self.group_name_cache:
             logger.debug(f"[Summary] 从缓存获取群名称: {group_id} -> {self.group_name_cache[group_id]}")
             return self.group_name_cache[group_id]
-        
+
         try:
             # 调用群信息API
             api_url = f"{self.config.get('api_base_url')}/group/getChatroomInfo"
@@ -429,15 +426,15 @@ class Summary(Plugin):
             headers = {
                 "X-GEWE-TOKEN": self.config.get('api_token')
             }
-            
+
             response = requests.post(api_url, headers=headers, json=payload)
-            
+
             if response.status_code == 200:
                 data = response.json()
                 if data.get('ret') == 200 and data.get('data'):
                     group_info = data['data']
                     group_name = group_info.get('nickName')  # 使用 nickName 字段
-                    
+
                     if group_name:
                         self.group_name_cache[group_id] = group_name
                         return group_name
@@ -455,19 +452,19 @@ class Summary(Plugin):
         """处理接收到的消息"""
         context = e_context['context']
         cmsg : ChatMessage = e_context['context']['msg']
-        
+
         # 检查消息内容是否需要过滤
         content = context.content
         if (('#' in content or '$' in content) and len(content) < 50):
             logger.debug(f"[Summary] 消息被过滤: {content}")
             return
-        
+
         # 获取会话ID和用户名
         if context.get("isgroup", False):
             # 群聊：使用群名作为session_id，用户昵称作为username
             session_id = self._get_group_name(cmsg.from_user_id)
             username = cmsg.actual_user_nickname or self._get_user_nickname(cmsg.actual_user_id)
-            
+
             # 只有当content以用户ID开头且后面紧跟冒号时才清理
             if content.startswith(f"{cmsg.actual_user_id}:"):
                 content = content[len(cmsg.actual_user_id) + 1:].strip()
@@ -492,20 +489,19 @@ class Summary(Plugin):
 
         self._insert_record(session_id, cmsg.msg_id, username, content, str(context.type), cmsg.create_time, int(is_triggered))
         logger.debug("[Summary] {}:{} ({})" .format(username, content, session_id))
-        
+
         # 处理图片消息
         if context.type == ContextType.IMAGE and self.multimodal_llm_api_base and self.multimodal_llm_model and self.multimodal_llm_api_key:
             context.get("msg").prepare()
             image_path = context.content  # 假设 context.content 是图片本地路径
             self._process_image_async(session_id, cmsg.msg_id, username, image_path, cmsg.create_time)
 
-
     def _process_image_async(self, session_id, msg_id, username, image_path, create_time):
         """使用线程池异步处理图片消息"""
         if self.pending_tasks >= self.max_pending_tasks:
             logger.warning("[Summary] 图片处理队列已满，丢弃请求")
             return
-        
+
         self.pending_tasks += 1
         future = self.executor.submit(self._process_image, session_id, msg_id, username, image_path, create_time)
         future.add_done_callback(self._handle_image_result)
@@ -579,29 +575,29 @@ class Summary(Plugin):
         total_length = 0
         # 修改变量名
         max_input_chars = self.input_max_tokens_limit * 4  # 粗略估计：1个 token 约等于 4 个字符
-        
+
         # 记录已经是倒序的（最新的在前），直接处理
         for record in records:
             username = record[2] or ""  # 处理空用户名
             content = record[3] or ""   # 处理空内容
             timestamp = record[5]
             is_triggered = record[6]
-            
+
             # 将时间戳转换为可读格式
             time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
-            
+
             if record[4] in [str(ContextType.IMAGE),str(ContextType.VOICE)]:
                 content = f"[{record[4]}]"
-            
+
             sentence = f'[{time_str}] {username}: "{content}"'
             if is_triggered:
                 sentence += " <T>"
-                
+
             # 检查添加此记录后是否会超出限制
             if total_length + len(sentence) + 2 > max_input_chars:  # 2 是换行符的长度
                 logger.info(f"[Summary] 输入长度限制已达到 {total_length} 个字符")
                 break
-                
+
             messages.append(sentence)
             total_length += len(sentence) + 2
 
@@ -632,7 +628,7 @@ class Summary(Plugin):
             query_chars_len = len(self._check_tokens(records))
             if query_chars_len > (self.chunk_max_tokens*4):
                records_temp = self._check_tokens(records)[:(self.chunk_max_tokens*4)] # 截取字符
-               
+
                #找到截取字符对应的记录条数
                record_count = 0
                temp_records = []
@@ -640,13 +636,13 @@ class Summary(Plugin):
                   record_content = f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record[5]))}] {record[2] or ""}: "{record[3] or ""}"'
                   if record[6]:
                         record_content += " <T>"
-                  
+
                   if len("\n\n".join(temp_records+[record_content])) <= (self.chunk_max_tokens*4):
                     temp_records.append(record_content)
                     record_count = record_count + 1
                   else:
                       break
-               
+
                records = records[record_count:]
             else:
                 break
@@ -715,19 +711,19 @@ class Summary(Plugin):
         content = context.content
         msg = context['msg']
         logger.debug("[Summary] on_handle_context. content: %s" % content)
-        
+
         # 检查是否是文本消息
         if context.type != ContextType.TEXT:
             return
-        
+
         # 清理消息内容中的用户ID前缀
         if context.get("isgroup", False) and content.startswith(f"{msg.actual_user_id}:"):
             content = content[len(msg.actual_user_id) + 1:].strip()
-        
+
         # 获取触发前缀
         trigger_prefix = self.config.get('plugin_trigger_prefix', "$")
         clist = content.split()
-        
+
         # 检查是否包含触发命令
         is_trigger = False
         if clist[0] == f"{trigger_prefix}总结":  # 严格匹配 "$总结"
@@ -739,7 +735,7 @@ class Summary(Plugin):
             # 2. 消息为"@xxx 总结"格式
             # 3. 消息为"总结 xxx"格式
             content_stripped = content.strip()
-            
+
             # 修复@开头但没有后续内容的情况
             if content_stripped.startswith("@"):
                 parts = content_stripped.split(" ", 1)
@@ -751,7 +747,7 @@ class Summary(Plugin):
             elif content_stripped.startswith("总结") or \
                  any(part.strip() == "总结" for part in content_stripped.split(" ", 1)):
                 is_trigger = True
-        
+
         if not is_trigger:
             return
 
@@ -765,7 +761,7 @@ class Summary(Plugin):
                 e_context["reply"] = reply
                 e_context.action = EventAction.BREAK_PASS
                 return
-            
+
             # 验证密码
             config_password = self.config.get('summary_password', '')
             if not config_password:
@@ -778,7 +774,7 @@ class Summary(Plugin):
                 e_context["reply"] = reply
                 e_context.action = EventAction.BREAK_PASS
                 return
-            
+
             # 验证目标会话是否存在
             if not self._validate_session_exists(target_session):
                 reply = Reply(ReplyType.ERROR, f"未找到指定的会话 '{target_session}'，请检查名称是否正确")
@@ -787,13 +783,13 @@ class Summary(Plugin):
                 return
 
         msg:ChatMessage = e_context['context']['msg']
-        
+
         # 根据是否是群聊选择不同的session_id
         if e_context['context'].get("isgroup", False):
             session_id = self._get_group_name(msg.from_user_id)  # 使用群名称
         else:
             session_id = self._get_user_nickname(msg.from_user_id)  # 使用用户昵称
-        
+
         # 使用目标会话ID（如果有的话）
         if target_session:
             session_id = target_session
@@ -802,13 +798,13 @@ class Summary(Plugin):
         logger.debug(f"[Summary] 正在查询聊天记录 - session_id: {session_id}, start_time: {start_time}, limit: {limit}")
         records = self._get_records(session_id, start_time, limit)
         logger.debug(f"[Summary] 查询到 {len(records) if records else 0} 条记录")
-        
+
         if not records:
             reply = Reply(ReplyType.ERROR, f"没有找到{'指定会话的' if target_session else ''}聊天记录")
             e_context["reply"] = reply
             e_context.action = EventAction.BREAK_PASS
             return
-        
+
         # 准备聊天记录内容
         query = self._check_tokens(records)
         if not query:
@@ -820,7 +816,7 @@ class Summary(Plugin):
         # 发送处理中的提示
         processing_reply = Reply(ReplyType.TEXT, "🎉正在为您生成总结，请稍候...")
         e_context["channel"].send(processing_reply, e_context["context"])
-        
+
         # 调用总结功能
         summarys = self._split_messages_to_summarys(records, custom_prompt, max_summarys=10)
         result = "\n\n".join(summarys)
