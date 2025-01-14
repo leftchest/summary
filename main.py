@@ -825,7 +825,7 @@ class Summary(Plugin):
         e_context.action = EventAction.BREAK_PASS
 
     def get_help_text(self, verbose = False, **kwargs):
-        help_text = "聊天记录总结插件。\n"
+        help_text = "聊天记录总结插件\n"
         if not verbose:
             return help_text
         trigger_prefix = self.config.get('plugin_trigger_prefix', "$")
@@ -839,5 +839,6 @@ class Summary(Plugin):
    - {trigger_prefix}总结 @群名称 密码 100 (总结指定群最近100条消息)
    - {trigger_prefix}总结 @用户名 密码 -2h (总结指定用户最近2小时消息)
 
-你也可以添加自定义指令，如：{trigger_prefix}总结 @群名称 密码 100 帮我找出重要的会议内容"""
+3. 总结使用自定义指令：
+   - {trigger_prefix}总结 @群名称 密码 100 帮我找出重要的会议内容"""
         return help_text
