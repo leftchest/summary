@@ -12,6 +12,7 @@ import base64
 from io import BytesIO
 from PIL import Image
 import shutil
+import re
 
 import plugins
 from bridge.context import ContextType
@@ -171,6 +172,7 @@ class Summary(Plugin):
                     config['api_base_url'] = main_config.get('gewechat_base_url')
                     config['api_token'] = main_config.get('gewechat_token')
                     config['app_id'] = main_config.get('gewechat_app_id')
+                    config['group_chat_prefix'] = main_config.get('group_chat_prefix', []) # 将主配置中的bot触发关键词映射到插件配置中
 
             return config
         except Exception as e:
@@ -712,46 +714,35 @@ class Summary(Plugin):
         msg = context['msg']
         logger.debug("[Summary] on_handle_context. content: %s" % content)
 
-        # 检查是否是文本消息
-        if context.type != ContextType.TEXT:
-            return
+        # 获取群聊前缀列表
+        group_chat_prefix = self.config.get("group_chat_prefix", [""])
 
-        # 清理消息内容中的用户ID前缀
-        if context.get("isgroup", False) and content.startswith(f"{msg.actual_user_id}:"):
-            content = content[len(msg.actual_user_id) + 1:].strip()
-
-        # 获取触发前缀
-        trigger_prefix = self.config.get('plugin_trigger_prefix', "$")
-        clist = content.split()
-
-        # 检查是否包含触发命令
-        is_trigger = False
-        if clist[0] == f"{trigger_prefix}总结":  # 严格匹配 "$总结"
-            # 使用$前缀触发
-            is_trigger = True
-        else:
-            # 检查是否是"总结"命令
-            # 1. 消息以"总结"开头
-            # 2. 消息为"@xxx 总结"格式
-            # 3. 消息为"总结 xxx"格式
-            content_stripped = content.strip()
-
-            # 修复@开头但没有后续内容的情况
-            if content_stripped.startswith("@"):
-                parts = content_stripped.split(" ", 1)
-                # 只有当@后面有内容，且内容中包含"总结"时才触发
-                if len(parts) > 1 and "总结" in parts[1].strip().split(" ", 1)[0]:
-                    is_trigger = True
-                    content = parts[1].strip()
-            # 检查其他情况
-            elif content_stripped.startswith("总结") or \
-                 any(part.strip() == "总结" for part in content_stripped.split(" ", 1)):
+        # 处理群聊消息
+        if context.get("isgroup", False):
+            # 遍历前缀列表，检查消息内容是否以这些前缀开头，允许前缀前后有0个或多个空格
+            for prefix in group_chat_prefix:
+                pattern = r'^\s*{}\s+'.format(re.escape(prefix))
+                if re.match(pattern, content):
+                    # 去掉前缀和前后的空格
+                    content = re.sub(pattern, '', content)
+                    break
+            # 检查处理后的内容是否以“$总结”开头
+            if content.startswith("$总结"):
                 is_trigger = True
+            else:
+                is_trigger = False
+        else:
+            # 私聊，直接检查是否以“$总结”开头
+            if content.startswith("$总结"):
+                is_trigger = True
+            else:
+                is_trigger = False
 
         if not is_trigger:
             return
 
         # 解析命令
+        clist = content.split()
         start_time, limit, custom_prompt, target_session, password = self._parse_summary_command(clist[1:])
 
         # 如果指定了目标会话，先检查是否在群聊中
@@ -782,7 +773,7 @@ class Summary(Plugin):
                 e_context.action = EventAction.BREAK_PASS
                 return
 
-        msg:ChatMessage = e_context['context']['msg']
+        msg: ChatMessage = e_context['context']['msg']
 
         # 根据是否是群聊选择不同的session_id
         if e_context['context'].get("isgroup", False):
