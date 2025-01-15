@@ -173,6 +173,7 @@ class Summary(Plugin):
                     config['api_token'] = main_config.get('gewechat_token')
                     config['app_id'] = main_config.get('gewechat_app_id')
                     config['group_chat_prefix'] = main_config.get('group_chat_prefix', []) # 将主配置中的bot触发关键词映射到插件配置中
+                    config['trigger_prefix'] = main_config.get('plugin_trigger_prefix', "$")
 
             return config
         except Exception as e:
@@ -713,9 +714,9 @@ class Summary(Plugin):
         content = context.content
         msg = context['msg']
         logger.debug("[Summary] on_handle_context. content: %s" % content)
-
-        # 获取群聊前缀列表
-        group_chat_prefix = self.config.get("group_chat_prefix", [""])
+        
+        trigger_prefix = self.config.get('trigger_prefix', "$")  # 获取 trigger_prefix        
+        group_chat_prefix = self.config.get("group_chat_prefix", [""])# 获取群聊前缀列表
 
         # 处理群聊消息
         if context.get("isgroup", False):
@@ -727,13 +728,13 @@ class Summary(Plugin):
                     content = re.sub(pattern, '', content)
                     break
             # 检查处理后的内容是否以“$总结”开头
-            if content.startswith("$总结"):
+            if content.startswith(f"{trigger_prefix}总结"):
                 is_trigger = True
             else:
                 is_trigger = False
         else:
             # 私聊，直接检查是否以“$总结”开头
-            if content.startswith("$总结"):
+            if content.startswith(f"{trigger_prefix}总结"):
                 is_trigger = True
             else:
                 is_trigger = False
@@ -819,7 +820,7 @@ class Summary(Plugin):
         help_text = "聊天记录总结插件\n"
         if not verbose:
             return help_text
-        trigger_prefix = self.config.get('plugin_trigger_prefix', "$")
+        trigger_prefix = self.config.get('trigger_prefix', "$")
         help_text += f"""使用方法:
 1. 总结当前会话:
    - {trigger_prefix}总结 100 (总结最近100条消息)
