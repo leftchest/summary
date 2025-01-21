@@ -458,6 +458,9 @@ class Summary(Plugin):
 
         # 检查消息内容是否需要过滤
         content = context.content
+        if content is None:
+            logger.warning("[summary] content is None, skipping processing")
+            return
         if (('#' in content or '$' in content) and len(content) < 50):
             logger.debug(f"[Summary] 消息被过滤: {content}")
             return
@@ -817,7 +820,7 @@ class Summary(Plugin):
         e_context.action = EventAction.BREAK_PASS
 
     def get_help_text(self, verbose = False, **kwargs):
-        help_text = "聊天记录总结插件\n"
+        help_text = "聊天记录总结\n"
         if not verbose:
             return help_text
         trigger_prefix = self.config.get('trigger_prefix', "$")
